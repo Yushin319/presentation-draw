@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="zh-TW"><head>
+    <meta charset="UTF-8">
+    <title>簡報發表選號系統 - 實名抽籤版</title>
+    <style>
+        :root {
+            --primary-color: #34495e;
+            --accent-color: #27ae60;
+            --card-front-bg: #ecf0f1;
+            --disabled-color: #95a5a6;
+        }
+
+        body { font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif; background: #f0f3f5; margin: 0; padding: 20px; text-align: center; }
+        
+        #header-area {
+            background: white; padding: 25px; border-radius: 15px; 
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1); max-width: 850px; 
+            margin: 0 auto 30px; border-top: 10px solid var(--primary-color);
+        }
+
+        .setup-area { 
+            background: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 20px;
+            display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap;
+        }
+
+        select { padding: 10px; font-size: 16px; border-radius: 8px; border: 2px solid #ddd; }
+        
+        button { 
+            padding: 10px 25px; font-size: 16px; cursor: pointer; border: none; 
+            border-radius: 50px; background: var(--primary-color); color: white; 
+            font-weight: bold; transition: 0.3s;
+        }
+        button:disabled { background: var(--disabled-color); cursor: not-allowed; }
+
+        .card-grid { 
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); 
+            gap: 15px; padding: 20px; max-width: 1000px; margin: 0 auto; perspective: 1000px; 
+        }
+
+        .card-container { height: 120px; position: relative; transform-style: preserve-3d; transition: transform 0.6s; cursor: pointer; }
+        .card-container.flipped { transform: rotateY(180deg); cursor: default; }
+        .card-container.locked { pointer-events: none; }
+
+        .card-face { 
+            position: absolute; width: 100%; height: 100%; backface-visibility: hidden; 
+            display: flex; align-items: center; justify-content: center; 
+            border-radius: 12px; font-weight: bold; box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+        }
+        
+        .card-front { background: var(--card-front-bg); color: var(--primary-color); border: 2px solid var(--primary-color); font-size: 40px; }
+        .card-back { background: var(--accent-color); color: white; transform: rotateY(180deg); font-size: 14px; flex-direction: column; padding: 5px; }
+
+        #msg { font-size: 1.2rem; font-weight: bold; color: #c0392b; margin-top: 20px; min-height: 40px; }
+        
+        .record-board { 
+            max-width: 850px; margin: 30px auto; background: white; padding: 20px; 
+            border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: left;
+        }
+        .record-item { padding: 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <div id="header-area">
+        <h1>🎙️ 簡報發表順位抽籤系統</h1>
+        
+        <div class="setup-area" id="setupArea">
+            <label>我是哪一組的組長：</label>
+            <select id="teamSelector">
+                <option value="">-- 請選擇組別 --</option>
+            </select>
+            <button onclick="confirmTeam()">確認組別並開始抽籤</button>
+        </div>
+
+        <div id="msg">請組長先完成報到</div>
+    </div>
+
+    <div id="card-grid" class="card-grid"></div>
+
+    <div class="record-board" id="recordBoard">
+        </div>
+
+    <script>
+        const originalTeams = [
+            "笑CC撐過試用期", "火風鼎", "404 Human Not Found", "AF0000",
+            "蒜泥厲害", "為了五百元", "Agent 在手，獎金我有", "AI~我們跟得上",
+            "Copilot Alchemy", "伍佰我來了", "Mission: Promptable", "行政服務小當家"
+        ];
+
+        let availableOrders = Array.from({length: 12}, (_, i) => i + 1);
+        let currentSelectingTeam = "";
+        let drawnRecords = {}; // 用於儲存 {順序: 組名}
+
+        // 初始化頁面
+        function init() {
+            // 填充下拉選單
+            const selector = document.getElementById('teamSelector');
+            originalTeams.forEach(team => {
+                let opt = document.createElement('option');
+                opt.value = team;
+                opt.innerText = team;
+                selector.appendChild(opt);
+            });
+
+            // 產生 12 張初始蓋著的牌
+            const grid = document.getElementById('card-grid');
+            grid.innerHTML = '';
+            for (let i = 1; i <= 12; i++) {
+                const container = document.createElement('div');
+                container.className = 'card-container locked'; // 初始鎖定，報到後才解鎖
+                container.id = 'card-' + i;
+                container.innerHTML = `
+                    <div class="card-face card-front">${i}</div>
+                    <div class="card-face card-back" id="back-${i}"></div>
+                `;
+                container.onclick = () => draw(i);
+                grid.appendChild(container);
+            }
+        }
+
+        // 1. 組長報到
+        function confirmTeam() {
+            const selector = document.getElementById('teamSelector');
+            const team = selector.value;
+
+            if (!team) {
+                alert("請先選擇您的組別！");
+                return;
+            }
+
+            currentSelectingTeam = team;
+            document.getElementById('msg').innerText = `請 ${team} 組長點擊下方任一數字卡片...`;
+            
+            // 解鎖尚未翻開的卡片
+            document.querySelectorAll('.card-container').forEach(card => {
+                if (!card.classList.contains('flipped')) {
+                    card.classList.remove('locked');
+                }
+            });
+
+            // 禁用報到按鈕防止重複報到
+            document.getElementById('setupArea').style.display = 'none';
+        }
+
+        // 2. 進行抽籤
+        function draw(orderNumber) {
+            if (!currentSelectingTeam) return;
+
+            const card = document.getElementById('card-' + orderNumber);
+            
+            // 翻牌
+            card.classList.add('flipped');
+            document.getElementById('back-' + orderNumber).innerHTML = `
+                <div style="font-size:12px; margin-bottom:5px;">第 ${orderNumber} 位上台</div>
+                <div style="font-size:16px;">${currentSelectingTeam}</div>
+            `;
+
+            // 記錄結果
+            drawnRecords[orderNumber] = currentSelectingTeam;
+            updateRecordBoard();
+
+            // 更新選單：移除已抽籤的組別
+            removeTeamFromList(currentSelectingTeam);
+            
+            // 重置狀態，等待下一組
+            currentSelectingTeam = "";
+            document.getElementById('msg').innerText = "已記錄！請下一組組長報到。";
+            document.getElementById('setupArea').style.display = 'flex';
+            document.getElementById('teamSelector').value = "";
+
+            // 鎖定所有卡片，直到下一組報到
+            document.querySelectorAll('.card-container').forEach(c => c.classList.add('locked'));
+        }
+
+        function removeTeamFromList(teamName) {
+            const selector = document.getElementById('teamSelector');
+            for (let i = 0; i < selector.length; i++) {
+                if (selector.options[i].value === teamName) {
+                    selector.remove(i);
+                    break;
+                }
+            }
+        }
+
+        function updateRecordBoard() {
+            const board = document.getElementById('recordBoard');
+            board.innerHTML = '<strong>當前順序記錄：</strong><br>';
+            // 按順位 1-12 排序顯示
+            for (let i = 1; i <= 12; i++) {
+                if (drawnRecords[i]) {
+                    const item = document.createElement('div');
+                    item.className = 'record-item';
+                    item.innerText = `順序 ${i}：${drawnRecords[i]}`;
+                    board.appendChild(item);
+                }
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
